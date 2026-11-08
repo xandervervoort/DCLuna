@@ -14,6 +14,10 @@ import {
   type BlackjackTransition,
 } from "../services/blackjack-renderer.ts";
 import {
+  createCardEmojiMap,
+  formatCardHand,
+} from "../services/blackjack-display.ts";
+import {
   canDouble,
   canHit,
   canSplit,
@@ -38,26 +42,27 @@ function isUnknownMessageError(error: unknown): boolean {
   );
 }
 
-function renderCards(cards: readonly BlackjackGame["dealerHand"][number][]): string {
-  return cards.map(({ rank, suit }) => `${rank}${suit}`).join("  ") || "—";
-}
-
-function renderGame(game: BlackjackGame, imageName: string): EmbedBuilder {
-  const dealerCards = game.status === "playing"
-    ? `${game.dealerHand[0]!.rank}${game.dealerHand[0]!.suit}  🂠`
-    : renderCards(game.dealerHand);
+function renderGame(
+  game: BlackjackGame,
+  imageName: string,
+  emojiByName: ReadonlyMap<string, string>,
+): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(game.status === "playing" ? 0x258764 : 0xc8a75e)
     .setTitle("Blackjack")
     .addFields(
       {
         name: `Dealer${game.status === "playing" ? ` · showing ${getHandValue([game.dealerHand[0]!])}` : ` · ${getHandValue(game.dealerHand)}`}`,
-        value: dealerCards,
+        value: formatCardHand(
+          game.dealerHand,
+          emojiByName,
+          game.status === "playing",
+        ),
         inline: false,
       },
       ...game.playerHands.map((hand, index) => ({
         name: `Hand ${index + 1}${index === game.activeHandIndex && game.status === "playing" ? " · Your turn" : hand.outcome ? ` · ${hand.outcome.toUpperCase()}` : ""} — ${getHandValue(hand.cards)}`,
-        value: renderCards(hand.cards),
+        value: formatCardHand(hand.cards, emojiByName),
         inline: true,
       })),
     )
@@ -172,6 +177,7 @@ function startRetryCollector(
   message: Awaited<ReturnType<ButtonInteraction["fetchReply"]>>,
   ownerId: string,
   revision: number,
+  emojiByName: ReadonlyMap<string, string>,
 ): void {
   const collector = message.createMessageComponentCollector({
     componentType: ComponentType.Button,
@@ -219,11 +225,11 @@ function startRetryCollector(
               ? { type: "deal", hand: "player", handIndex: 0, cardIndex: 1 }
               : undefined;
           const reply = await buttonInteraction.followUp({
-            embeds: [renderGame(game, imageName)],
+            embeds: [renderGame(game, imageName, emojiByName)],
             components: createGameComponents(game, nextRevision),
             files: createGameFiles(game, imageName, transition),
           });
-          startGameCollector(reply, ownerId, game, nextRevision);
+          startGameCollector(reply, ownerId, game, nextRevision, emojiByName);
         } catch (error) {
           console.error("Failed to start a retry blackjack game.", error);
           await buttonInteraction.followUp({
@@ -248,9 +254,10 @@ function startGameCollector(
   ownerId: string,
   game: BlackjackGame,
   initialRevision: number,
+  emojiByName: ReadonlyMap<string, string>,
 ): void {
   if (game.status !== "playing") {
-    startRetryCollector(message, ownerId, initialRevision);
+    startRetryCollector(message, ownerId, initialRevision, emojiByName);
     return;
   }
 
@@ -337,7 +344,7 @@ function startGameCollector(
         revision += 1;
         const updatedImageName = `blackjack-${revision}.gif`;
         await message.edit({
-          embeds: [renderGame(game, updatedImageName)],
+          embeds: [renderGame(game, updatedImageName, emojiByName)],
           components: createGameComponents(game, revision),
           attachments: [],
           files: createGameFiles(game, updatedImageName, transition),
@@ -358,7 +365,7 @@ function startGameCollector(
 
   collector.on("end", (_collected, reason) => {
     if (reason === "game-over") {
-      startRetryCollector(message, ownerId, revision);
+      startRetryCollector(message, ownerId, revision, emojiByName);
       return;
     }
 
@@ -369,12 +376,12 @@ function startGameCollector(
           revision += 1;
           const updatedImageName = `blackjack-${revision}.gif`;
           await message.edit({
-            embeds: [renderGame(game, updatedImageName)],
+            embeds: [renderGame(game, updatedImageName, emojiByName)],
             components: createGameComponents(game, revision),
             attachments: [],
             files: createGameFiles(game, updatedImageName),
           });
-          startRetryCollector(message, ownerId, revision);
+          startRetryCollector(message, ownerId, revision, emojiByName);
         })
         .catch((error: unknown) => {
           if (!isUnknownMessageError(error)) {
@@ -391,6 +398,8 @@ export const blackjackCommand: ChatInputCommand = {
     .setDescription("Play a game of blackjack."),
 
   async execute(interaction) {
+    const applicationEmojis = await interaction.client.application.emojis.fetch();
+    const emojiByName = createCardEmojiMap(applicationEmojis.values());
     const game = startBlackjackGame(createShuffledDeck());
     const revision = 0;
     const imageName = `blackjack-${revision}.gif`;
@@ -399,12 +408,12 @@ export const blackjackCommand: ChatInputCommand = {
         ? { type: "deal", hand: "player", handIndex: 0, cardIndex: 1 }
         : undefined;
     await interaction.reply({
-      embeds: [renderGame(game, imageName)],
+      embeds: [renderGame(game, imageName, emojiByName)],
       components: createGameComponents(game, revision),
       files: createGameFiles(game, imageName, initialTransition),
     });
 
     const message = await interaction.fetchReply();
-    startGameCollector(message, interaction.user.id, game, revision);
+    startGameCollector(message, interaction.user.id, game, revision, emojiByName);
   },
 };

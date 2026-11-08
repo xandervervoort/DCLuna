@@ -17,6 +17,12 @@ import {
   renderBlackjackGif,
   renderBlackjackTable,
 } from "../src/services/blackjack-renderer.ts";
+import {
+  createCardEmojiMap,
+  formatCardHand,
+  getCardEmojiName,
+  getRequiredCardEmojiNames,
+} from "../src/services/blackjack-display.ts";
 
 function card(rank: Card["rank"], suit: Card["suit"] = "♠"): Card {
   return { rank, suit };
@@ -245,4 +251,39 @@ test("card transitions render as a valid animated GIF", () => {
   assert.ok(animation.length > staticImage.length);
   assert.equal(animation.readUInt16LE(6), 1024);
   assert.equal(animation.readUInt16LE(8), 860);
+});
+
+test("card emoji names use rank and suit names without face-card suffixes", () => {
+  assert.equal(getCardEmojiName(card("10", "♦")), "10_of_diamonds");
+  assert.equal(getCardEmojiName(card("A", "♠")), "ace_of_spades");
+  assert.equal(getCardEmojiName(card("Q", "♠")), "queen_of_spades");
+  assert.equal(getCardEmojiName(card("K", "♥")), "king_of_hearts");
+  assert.equal(getCardEmojiName(card("J", "♣")), "jack_of_clubs");
+  assert.equal(getRequiredCardEmojiNames().length, 52);
+});
+
+test("card emoji formatter displays custom emojis and hides the dealer hole card", () => {
+  const emojiByName = createCardEmojiMap(
+    getRequiredCardEmojiNames().map((name) => ({
+      name,
+      toString: () => `<:${name}:123>`,
+    })),
+  );
+  const hand = [card("7", "♣"), card("2", "♦"), card("Q", "♠")];
+
+  assert.equal(
+    formatCardHand(hand, emojiByName),
+    "<:7_of_clubs:123>  <:2_of_diamonds:123>  <:queen_of_spades:123>",
+  );
+  assert.equal(
+    formatCardHand(hand, emojiByName, true),
+    "<:7_of_clubs:123>  🂠",
+  );
+});
+
+test("missing required card emojis are reported", () => {
+  assert.throws(
+    () => createCardEmojiMap([]),
+    /Missing blackjack application emojis: ace_of_spades/,
+  );
 });
