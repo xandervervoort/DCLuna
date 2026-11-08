@@ -8,7 +8,10 @@ import {
   startBlackjackGame,
   type Card,
 } from "../src/services/blackjack.ts";
-import { renderBlackjackTable } from "../src/services/blackjack-renderer.ts";
+import {
+  renderBlackjackGif,
+  renderBlackjackTable,
+} from "../src/services/blackjack-renderer.ts";
 
 function card(rank: Card["rank"], suit: Card["suit"] = "♠"): Card {
   return { rank, suit };
@@ -94,10 +97,34 @@ test("table renderer creates a PNG and reveals the dealer hand when the game end
   assert.deepEqual([...playingImage.subarray(0, 8)], [
     137, 80, 78, 71, 13, 10, 26, 10,
   ]);
-  assert.equal(playingImage.readUInt32BE(16), 960);
-  assert.equal(playingImage.readUInt32BE(20), 560);
+  assert.equal(playingImage.readUInt32BE(16), 1024);
+  assert.equal(playingImage.readUInt32BE(20), 820);
 
   stand(game);
   const finishedImage = renderBlackjackTable(game);
   assert.notDeepEqual(finishedImage, playingImage);
+});
+
+test("card transitions render as a valid animated GIF", () => {
+  const game = gameWithTopCards(
+    card("10"),
+    card("6", "♥"),
+    card("7", "♦"),
+    card("9", "♣"),
+    card("5", "♥"),
+  );
+  hit(game);
+
+  const animation = renderBlackjackGif(game, {
+    type: "deal",
+    hand: "player",
+    cardIndex: 2,
+  });
+  const staticImage = renderBlackjackGif(game);
+
+  assert.equal(animation.toString("ascii", 0, 6), "GIF89a");
+  assert.equal(animation.at(-1), 0x3b);
+  assert.ok(animation.length > staticImage.length);
+  assert.equal(animation.readUInt16LE(6), 1024);
+  assert.equal(animation.readUInt16LE(8), 820);
 });

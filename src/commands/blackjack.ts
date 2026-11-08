@@ -9,7 +9,10 @@ import {
   type ButtonInteraction,
 } from "discord.js";
 import type { ChatInputCommand } from "../types/command.ts";
-import { renderBlackjackTable } from "../services/blackjack-renderer.ts";
+import {
+  renderBlackjackGif,
+  type BlackjackTransition,
+} from "../services/blackjack-renderer.ts";
 import {
   createShuffledDeck,
   getHandValue,
@@ -34,7 +37,7 @@ function renderCards(cards: readonly BlackjackGame["playerHand"][number][]): str
   return cards.map(({ rank, suit }) => `${rank}${suit}`).join("  ") || "—";
 }
 
-function renderGame(game: BlackjackGame): EmbedBuilder {
+function renderGame(game: BlackjackGame, imageName: string): EmbedBuilder {
   const playerCards = renderCards(game.playerHand);
   const dealerCards = game.status === "playing"
     ? `${game.dealerHand[0]!.rank}${game.dealerHand[0]!.suit}  🂠`
@@ -54,7 +57,7 @@ function renderGame(game: BlackjackGame): EmbedBuilder {
         inline: true,
       },
     )
-    .setImage("attachment://blackjack.png");
+    .setImage(`attachment://${imageName}`);
 
   if (game.status === "playing") {
     embed.setDescription("Choose **Hit** or **Stand**.");
@@ -71,8 +74,12 @@ function renderGame(game: BlackjackGame): EmbedBuilder {
   return embed;
 }
 
-function createGameFiles(game: BlackjackGame) {
-  return [{ attachment: renderBlackjackTable(game), name: "blackjack.png" }];
+function createGameFiles(
+  game: BlackjackGame,
+  imageName: string,
+  transition?: BlackjackTransition,
+) {
+  return [{ attachment: renderBlackjackGif(game, transition), name: imageName }];
 }
 
 function createButtons(disabled: boolean): ActionRowBuilder<ButtonBuilder> {
@@ -119,10 +126,16 @@ export const blackjackCommand: ChatInputCommand = {
 
   async execute(interaction) {
     const game = startBlackjackGame(createShuffledDeck());
+    let revision = 0;
+    const imageName = `blackjack-${revision}.gif`;
+    const initialTransition: BlackjackTransition | undefined =
+      game.status === "playing"
+        ? { type: "deal", hand: "player", cardIndex: 1 }
+        : undefined;
     await interaction.reply({
-      embeds: [renderGame(game)],
+      embeds: [renderGame(game, imageName)],
       components: [createButtons(game.status !== "playing")],
-      files: createGameFiles(game),
+      files: createGameFiles(game, imageName, initialTransition),
     });
 
     if (game.status !== "playing") {
@@ -156,19 +169,36 @@ export const blackjackCommand: ChatInputCommand = {
           }
 
           await buttonInteraction.deferUpdate();
+          const previousPlayerCardCount = game.playerHand.length;
+          const previousDealerCardCount = game.dealerHand.length;
+          let transition: BlackjackTransition;
           if (buttonInteraction.customId === "blackjack:hit") {
             hit(game);
+            transition = {
+              type: "deal",
+              hand: "player",
+              cardIndex: previousPlayerCardCount,
+            };
           } else if (buttonInteraction.customId === "blackjack:stand") {
             stand(game);
+            transition = game.dealerHand.length > previousDealerCardCount
+              ? {
+                  type: "deal",
+                  hand: "dealer",
+                  cardIndex: game.dealerHand.length - 1,
+                }
+              : { type: "reveal", cardIndex: 1 };
           } else {
             throw new Error(`Unknown blackjack button: ${buttonInteraction.customId}`);
           }
 
+          revision += 1;
+          const updatedImageName = `blackjack-${revision}.gif`;
           await interaction.editReply({
-            embeds: [renderGame(game)],
+            embeds: [renderGame(game, updatedImageName)],
             components: [createButtons(game.status !== "playing")],
             attachments: [],
-            files: createGameFiles(game),
+            files: createGameFiles(game, updatedImageName, transition),
           });
 
           if (game.status !== "playing") {
@@ -189,11 +219,13 @@ export const blackjackCommand: ChatInputCommand = {
         game.status = "expired";
         actionQueue = actionQueue
           .then(async () => {
+            revision += 1;
+            const updatedImageName = `blackjack-${revision}.gif`;
             await interaction.editReply({
-              embeds: [renderGame(game)],
+              embeds: [renderGame(game, updatedImageName)],
               components: [createButtons(true)],
               attachments: [],
-              files: createGameFiles(game),
+              files: createGameFiles(game, updatedImageName),
             });
           })
           .catch((error: unknown) => {
