@@ -3,10 +3,9 @@ import gifenc from "gifenc";
 import { getHandValue, type BlackjackGame, type Card } from "./blackjack.ts";
 
 const CANVAS_WIDTH = 1024;
-const CANVAS_HEIGHT = 820;
+const CANVAS_HEIGHT = 860;
 const CARD_GAP = 12;
 const RED_SUITS = new Set(["♥", "♦"]);
-const FELT = "#075541";
 const CREAM = "#fff8e9";
 const GOLD = "#e5c27a";
 
@@ -14,7 +13,7 @@ type CanvasContext = ReturnType<ReturnType<typeof createCanvas>["getContext"]>;
 type HandName = "player" | "dealer";
 
 export type BlackjackTransition =
-  | { type: "deal"; hand: HandName; cardIndex: number }
+  | { type: "deal"; hand: HandName; cardIndex: number; handIndex?: number }
   | { type: "reveal"; cardIndex: number };
 
 function roundedRect(
@@ -119,13 +118,18 @@ function drawCard(
 function cardPositions(
   count: number,
   y: number,
+  centerX = CANVAS_WIDTH / 2,
+  maxCardWidth = 156,
+  maxHandWidth = CANVAS_WIDTH - 104,
 ): { x: number; y: number; width: number; height: number }[] {
   if (count === 0) return [];
-  const availableWidth = CANVAS_WIDTH - 104;
-  const width = Math.min(156, (availableWidth - CARD_GAP * (count - 1)) / count);
+  const width = Math.min(
+    maxCardWidth,
+    (maxHandWidth - CARD_GAP * (count - 1)) / count,
+  );
   const height = width * 1.42;
   const handWidth = count * width + (count - 1) * CARD_GAP;
-  const startX = (CANVAS_WIDTH - handWidth) / 2;
+  const startX = centerX - handWidth / 2;
 
   return Array.from({ length: count }, (_value, index) => ({
     x: startX + index * (width + CARD_GAP),
@@ -160,17 +164,22 @@ function drawHand(
   transition: BlackjackTransition | undefined,
   handName: HandName,
   progress: number,
+  handIndex?: number,
+  centerX = CANVAS_WIDTH / 2,
+  maxCardWidth = 156,
+  maxHandWidth = CANVAS_WIDTH - 104,
 ): void {
-  const positions = cardPositions(cards.length, y);
+  const positions = cardPositions(cards.length, y, centerX, maxCardWidth, maxHandWidth);
   cards.forEach((card, index) => {
     const position = positions[index]!;
     if (
       transition?.type === "deal" &&
       transition.hand === handName &&
+      (handName !== "player" || transition.handIndex === handIndex) &&
       transition.cardIndex === index
     ) {
       const eased = 1 - (1 - progress) ** 3;
-      const startX = CANVAS_WIDTH / 2 - position.width / 2;
+      const startX = centerX - position.width / 2;
       const startY = 338 - position.height / 2;
       drawCard(
         context,
@@ -263,7 +272,7 @@ function drawTable(
     : game.dealerHand;
   drawHand(context, dealerCards, 164, transition, "dealer", progress);
 
-  const dividerY = 430;
+  const dividerY = game.playerHands.length > 1 ? 420 : 430;
   context.strokeStyle = "rgba(244, 223, 174, 0.45)";
   context.lineWidth = 2;
   context.beginPath();
@@ -272,30 +281,85 @@ function drawTable(
   context.stroke();
 
   const statusText = game.status === "playing"
-    ? "YOUR TURN"
+    ? game.playerHands.length > 1
+      ? `HAND ${game.activeHandIndex + 1} OF ${game.playerHands.length}`
+      : "YOUR TURN"
     : game.status === "expired"
       ? "GAME EXPIRED"
-      : game.outcome === "win"
+      : game.playerHands.every((hand) => hand.outcome === "win")
         ? "YOU WIN"
-        : game.outcome === "loss"
+        : game.playerHands.every((hand) => hand.outcome === "loss")
           ? "DEALER WINS"
-          : "PUSH";
-  const statusColor = game.outcome === "win"
+          : "ROUND OVER";
+  const statusColor = game.playerHands.some((hand) => hand.outcome === "win")
     ? "rgba(14, 103, 62, 0.95)"
-    : game.outcome === "loss"
+    : game.playerHands.every((hand) => hand.outcome === "loss")
       ? "rgba(139, 43, 49, 0.95)"
       : undefined;
   drawPill(context, statusText, CANVAS_WIDTH / 2 - 100, dividerY - 19, 200, statusColor);
 
-  drawPill(context, "YOUR HAND", CANVAS_WIDTH / 2 - 100, 463, 200);
-  drawPill(
-    context,
-    `SCORE  ${getHandValue(game.playerHand)}`,
-    CANVAS_WIDTH / 2 - 75,
-    503,
-    150,
-  );
-  drawHand(context, game.playerHand, 555, transition, "player", progress);
+  if (game.playerHands.length === 1) {
+    drawPill(context, "YOUR HAND", CANVAS_WIDTH / 2 - 100, 463, 200);
+    drawPill(
+      context,
+      `SCORE  ${getHandValue(game.playerHands[0]!.cards)}`,
+      CANVAS_WIDTH / 2 - 75,
+      503,
+      150,
+    );
+    drawHand(
+      context,
+      game.playerHands[0]!.cards,
+      555,
+      transition,
+      "player",
+      progress,
+      0,
+    );
+  } else {
+    const columnWidth = 460;
+    const rowGap = 178;
+    const top = 455;
+    game.playerHands.forEach((hand, index) => {
+      const row = Math.floor(index / 2);
+      const column = index % 2;
+      const centerX = column === 0 ? 270 : CANVAS_WIDTH - 270;
+      const panelTop = top + row * rowGap;
+      const isActive = game.status === "playing" && index === game.activeHandIndex;
+
+      context.save();
+      roundedRect(context, centerX - columnWidth / 2, panelTop, columnWidth, 168, 18);
+      context.fillStyle = isActive ? "rgba(227, 195, 111, 0.15)" : "rgba(3, 41, 34, 0.3)";
+      context.fill();
+      context.strokeStyle = isActive ? GOLD : "rgba(244, 223, 174, 0.3)";
+      context.lineWidth = isActive ? 3 : 1;
+      context.stroke();
+      context.restore();
+
+      context.fillStyle = CREAM;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.font = "bold 15px sans-serif";
+      const label = hand.outcome
+        ? `HAND ${index + 1} · ${hand.outcome.toUpperCase()}`
+        : isActive
+          ? `HAND ${index + 1} · YOUR TURN`
+          : `HAND ${index + 1} · ${hand.stood ? "STOOD" : "WAITING"}`;
+      context.fillText(`${label}  ·  ${getHandValue(hand.cards)}`, centerX, panelTop + 20);
+      drawHand(
+        context,
+        hand.cards,
+        panelTop + 33,
+        transition,
+        "player",
+        progress,
+        index,
+        centerX,
+        106,
+        columnWidth - 24,
+      );
+    });
+  }
 
   return canvas;
 }
